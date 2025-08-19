@@ -1,0 +1,415 @@
+#!/usr/bin/bash
+################################################################################
+## create docker image for ROS2
+##
+##  docker login -p
+##
+################################################################################
+##
+## Author:  Jose Pagan
+##   Date:  12/02/2024
+## Update:  04/01/2025
+################################################################################
+SCRIPT_NAME=$(basename $0)
+SCRIPT_PATH=$( cd $(dirname $(readlink `[[ $OSTYPE == linux* ]] && echo "-f"` $0)) ; pwd -P)
+
+## Source the common definitions:
+source ${SCRIPT_PATH}/common
+
+
+################################################################################
+## Default script behavior
+PUSH=0
+
+
+################################################################################
+## Help text, as function
+help_text()
+{
+    echo ""
+    echo "Usage: $(basename $0) [ -c ] [ -h ] [ -l ] [ -n ] [ -p ] [ -t {type} ] [ -v ]"
+    echo "  Build Dockerhub image."
+    echo ""
+    echo "  Valid arguments are:"
+    echo "    -c          build clean image (--no-cahce)"
+    echo "    -h          display this message"
+    echo "    -l          use version \"latest\" when pushing to Dockerhub"
+    echo "    -n          No Build, merely show the Docker command(s) to be used"
+    echo "    -p          push image to dockerhub, after building"
+    echo "    -t {type}   base image type to build; [ stm32 | nxp | jazzy | humble(default) | yocto ]"
+    echo "    -v          enable verbose messages (default=disabled)"
+    exit 1
+}
+
+
+################################################################################
+## ERROR:Message for failed docker build
+err_build_failed()
+{
+    echo "----------------------- Docker Image Build Failed -----------------------"
+    echo "  ERROR: Docker image failed to build."
+    echo "         Nothing pushed to Dockerhub"
+    echo "-------------------------------------------------------------------------"
+}
+
+
+################################################################################
+## WARNING: Message when docker image not pushed to dockerhub
+warn_no_push()
+{
+    MSG=${1:-WARN}
+    [ -n "${CMD_SHOW}" ] \
+      && echo "--------------------------- Docker Image Push ---------------------------"
+
+    echo "  ${MSG}: image not pushed to Dockerhub"
+
+    [ -n "${CMD_SHOW}" ] \
+      && echo "-------------------------------------------------------------------------"
+}
+
+
+################################################################################
+##
+## Push image, or show the push command
+##
+################################################################################
+image_push_to_dockerhub()
+{
+    ## PUSH to dockerhub enabled
+    [ -n "${CMD_SHOW}" ] \
+        && echo "-------------------------------- Push -----------------------------------"
+
+    ${CMD_SHOW} docker push ${DOCKERHUB_URL}/${DOCKERHUB_NAMESPACE}/${IMAGE_TAG}
+    RET=$?
+
+    [ -n "${CMD_SHOW}" ] \
+        && echo "-------------------------------------------------------------------------"
+
+    if [[ $RET -ne 0 ]]
+    then
+        warn_no_push "ERROR"
+    fi
+    
+    return $RET
+}
+
+
+################################################################################
+## Steps needed to build a YOCTO image.
+##    NOTE: This does not build the mountable volume for DL and state cache
+##          since these are unique (only local) for each user. Dockerhub
+##          does not support storing volumes.
+build_image_yocto()
+{
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "--------------------------- Build Yocto Image ---------------------------"
+
+    ## Run the build command
+    #           -t xxxx-controls-kas/jose.pagan:1.1.0 \
+    #           /home/jose.pagan/workspace/yocto-workdir/meta-xxxx
+
+
+    ${CMD_SHOW} docker build \
+        --network=host \
+        ${CLEAN_IMAGE} \
+        --build-arg USERNAME=${USERNAME} \
+        --build-arg UUID=${UUID} \
+        --build-arg GGID=${GGID} \
+        --build-arg BASE_IMAGE=${DOCKERHUB_URL}/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME} \
+        --build-arg WORKING=${DOCKER_WORKING_DIR} \
+        --tag ${DOCKERHUB_NAMESPACE}/${IMAGE_TAG} \
+        ${SCRIPT_PATH}/yocto-base
+
+    RET=$?
+
+    if [[ $RET -ne 0 ]]
+    then
+        err_build_failed
+    elif [[ $PUSH -eq 0 ]] && [[ -z "${CMD_SHOW}" ]]
+    then
+        warn_no_push
+    else
+        ## PUSH to docker hub or show the push command if CMD_SHOW is populated
+        image_push_to_dockerhub
+    fi
+
+    ## Command to build the local docker volume:
+#    ${CMD_SHOW} docker volume create \
+#           --driver local \
+#           --opt type=nfs \
+#           --opt o=addr=controls-Precision-7920-Tower,rw,nfsvers=4,nolock,soft \
+#           --opt device=:/mnt/datadrive/server-cache srv-cache
+
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "-------------------------- Yocto Build Complete -------------------------"
+
+    return $RET
+}
+
+
+################################################################################
+## Steps needed to build a NXP image, without ROS.
+## NOTE: not needed for NXP -->  --build-arg ROS_DISTRO=${ROS_DISTRO}
+
+build_image_nxp()
+{
+    [ -n "${CMD_SHOW}" ] || [ -v DEBUG  ] && [ $DEBUG ] \
+        && echo "--------------------------- Build NXP Image ---------------------------"
+
+    ## Run the build command
+    ${CMD_SHOW} docker build \
+        --network host \
+        ${CLEAN_IMAGE} \
+        --build-arg LINUX_DISTRO=${LINUX_DISTRO} \
+        --build-arg DDS_TYPE=${DDS_TYPE} \
+        --tag ${DOCKERHUB_NAMESPACE}/${IMAGE_TAG} \
+        ${SCRIPT_PATH}/nxp-base
+
+    RET=$?
+
+    if [[ $RET -ne 0 ]]
+    then
+        err_build_failed
+    elif [[ $PUSH -eq 0 ]] && [[ -z "${CMD_SHOW}" ]]
+    then
+        warn_no_push
+    else
+        ## PUSH to docker hub or show the push command if CMD_SHOW is populated
+        image_push_to_dockerhub
+    fi
+
+    [ -n "${CMD_SHOW}" ] || [ -v DEBUG  ] && [ $DEBUG ] \
+        && echo "-------------------------- NXP Build Complete -------------------------"
+
+    return $RET
+}
+
+################################################################################
+## Steps needed to build a STM32 image, with ROS humble.
+build_image_stm32()
+{
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "--------------------------- Build STM32 Image ---------------------------"
+
+    ## copy the DDS config files to the stm32 dir, the directory dds_config needs
+    ## to be local to the Dockerfile
+    cp -r  ${DDS_CONFIG_SOURCE_PATH}  ${SCRIPT_PATH}/stm32-base/${DDS_CONFIG_SOURCE_DIR}
+
+    ## Run the build command
+    ${CMD_SHOW} docker build \
+        --network host \
+        ${CLEAN_IMAGE} \
+        --build-arg ROS_DISTRO=${ROS_DISTRO} \
+        --build-arg LINUX_DISTRO=${LINUX_DISTRO} \
+        --build-arg DDS_TYPE=${DDS_TYPE} \
+        --build-arg DDS_CONFIG_DIR=${DDS_CONFIG_DOCKER_PATH} \
+        --build-arg DDS_CONFIG_SOURCE_DIR=${DDS_CONFIG_SOURCE_DIR} \
+        --tag ${DOCKERHUB_NAMESPACE}/${IMAGE_TAG} \
+        ${SCRIPT_PATH}/stm32-base
+
+    RET=$?
+
+    ## cleanup the ros-2 dir
+    rm -rf  ${SCRIPT_PATH}/stm32-base/${DDS_CONFIG_SOURCE_DIR}
+
+    if [[ $RET -ne 0 ]]
+    then
+        err_build_failed
+    elif [[ $PUSH -eq 0 ]] && [[ -z "${CMD_SHOW}" ]]
+    then
+        warn_no_push
+    else
+        ## PUSH to docker hub or show the push command if CMD_SHOW is populated
+        image_push_to_dockerhub
+    fi
+
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "-------------------------- STM32 Build Complete -------------------------"
+
+    return $RET
+}
+
+
+################################################################################
+## Steps needed to build a the various ROS images (humble and jazzy). The ROS
+##  packages are tied to specific Ubuntu Distros and that is done in functions
+##  here and in the common code.
+build_image_ros2()
+{
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "--------------------------- Build ROS2 Image ----------------------------"
+
+    ## copy the DDS config files to the ros2 dir, the directory dds_config needs
+    ## to be local to the Dockerfile
+    
+    echo "DDS_CONFIG_SOURCE_PATH= [${DDS_CONFIG_SOURCE_PATH}]"
+    echo "LOCAL+PATH= [${SCRIPT_PATH}/ros2-base/${DOCKER_IMAGE_TYPE}/${DDS_CONFIG_SOURCE_DIR}]"
+
+
+    cp -r  ${DDS_CONFIG_SOURCE_PATH}  ${SCRIPT_PATH}/ros2-base/dds_${DOCKER_IMAGE_TYPE}
+
+    ## Run the build command
+    ${CMD_SHOW} docker build \
+        ${CLEAN_IMAGE} \
+        --build-arg ROS_DISTRO=${DOCKER_IMAGE_TYPE} \
+        --build-arg LINUX_DISTRO=${LINUX_DISTRO} \
+        --build-arg DDS_TYPE=${DDS_TYPE} \
+        --build-arg DDS_CONFIG_DIR=${DDS_CONFIG_DOCKER_PATH} \
+        --build-arg DDS_CONFIG_SOURCE_DIR=dds_${DOCKER_IMAGE_TYPE} \
+        --tag ${DOCKERHUB_NAMESPACE}/${IMAGE_TAG} \
+        ${SCRIPT_PATH}/ros2-base
+
+    RET=$?
+
+    ## cleanup the ros-2 dir
+    rm -rf  ${SCRIPT_PATH}/ros2-base/dds_${DOCKER_IMAGE_TYPE}
+
+    [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] \
+        && echo " RET: [${RET}]" \
+        && echo "PUSH: [${PUSH}]"
+
+    if [[ $RET -ne 0 ]]
+    then
+        err_build_failed
+    elif [[ $PUSH -eq 0 ]] && [[ -z "${CMD_SHOW}" ]]
+    then
+        warn_no_push
+    else
+        ## PUSH to docker hub or show the push command if CMD_SHOW is populated
+        image_push_to_dockerhub
+    fi
+
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "--------------------------- ROS2 Build Complete -------------------------"
+
+    return $RET
+}
+
+
+################################################################################
+## Parse command line arguments (flags):
+while getopts ":chlnpt:v" OPT; do
+    case $OPT in
+    c) ## Build clean image, without cacheing
+        CLEAN_IMAGE="--no-cache"
+        ;;
+    h) ## Help message
+        help_text
+        exit 1
+        ;;
+    l) ## Replace version string with "latest"
+        DOCKER_IMAGE_VERSION=latest
+        ;;
+    n) ## "-n" | "--no-run")
+        NORUN=1
+        CMD_SHOW="echo "
+        ;;
+    p) ## Build image locally, and push to dockerhub
+	## Only allow the build user to PUSH images to Dockerhub
+        if [[ "${DOCKERHUB_NAMESPACE}" == "${DEFAULT_DOCKERHUB_NAMESPACE}" ]]
+        then
+            ## This push is to the automation workspace in Dockerhub
+            if [[ "${USERNAME}" != "${AUTOMATION_USER}" ]]
+            then
+                ## Only the automation user is only allowed to push there
+                echo "ERROR: user \"${USERNAME}\" is not allowed to push images to"
+                echo "       dockerhub namespace \"${DEFAULT_DOCKERHUB_NAMESPACE}\" "
+                echo "--------------------------------------------------------------------------"
+                exit 1
+            fi
+        fi
+
+    	## You need to be logged in to push anything
+	    get_dockerhub_username  ; RET=$?
+	    if [[ $RET -ne 0 ]]
+    	then
+	        exit 1
+	    fi
+	
+        echo "Dockerbub username: [$DOCKERHUB_USERNAME]"
+        PUSH=1
+        ;;
+    t) ## "-n" | "--no-run")
+        DOCKER_IMAGE_TYPE=$OPTARG
+        if [[ -n "${ROS_DISTRO}" ]]
+        then
+            echo "***** WARN: command line argument \"ROS_DISTRO\" superceded by type flag (-t)"
+            unset ROS_DISTRO
+        fi
+        ;;
+    v)
+        ## "-v" | "--verbose-messages-for-debugging")
+        DEBUG=1
+        ;;
+    ?)
+        echo "ERROR: [-$OPTARG] command invalid or missing argument"
+        exit 1
+        ;;
+    *)
+        echo "ERROR: missing argument: [$OPTARG]"
+        exit 1
+        ;;
+    esac
+done
+
+
+################################################################################
+## Catch any errors when someone specifies a docker image (type)
+LINUX_DISTRO=$(get_ubuntu_from_ros2_distro "${DOCKER_IMAGE_TYPE}")
+RET=$?
+## Verify image type
+if [[ $RET -ne 0 ]]
+then
+    echo ${LINUX_DISTRO}
+    exit 1
+fi
+
+IMAGE_TAG=$(get_tag_from_ros2_distro "${DOCKER_IMAGE_TYPE}"):${DOCKER_IMAGE_VERSION}
+RET=$?
+## Verify image type
+if [[ $RET -ne 0 ]]
+then
+    echo ${IMAGE_TAG}
+    exit 1
+fi
+
+echo "        -- -- Docker Image -- --"
+echo "      Type: [${DOCKER_IMAGE_TYPE}]"
+echo "     Linux: [${LINUX_DISTRO}]"
+echo "   Version: [${DOCKER_IMAGE_VERSION}]"
+echo "       Tag: [${IMAGE_TAG}]"
+echo "       DDS: [${DDS_TYPE}]"
+
+################################################################################
+##
+##
+case ${DOCKER_IMAGE_TYPE} in
+    "nxp")
+        [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] &&  echo "Image: [${DOCKER_IMAGE_TYPE}]"
+        build_image_nxp
+        ;;
+    "stm32")
+        [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] &&  echo "Image: [${DOCKER_IMAGE_TYPE}]"
+        ROS_DISTRO=humble
+        build_image_stm32
+        ;;
+
+    "jazzy" | "humble")
+        [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] &&  echo "Image: [${DOCKER_IMAGE_TYPE}]"
+        build_image_ros2
+        ;;
+
+    "yocto")
+        [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] &&  echo "Image: [${DOCKER_IMAGE_TYPE}]"
+        build_image_yocto
+        ;;
+
+    ?)
+        echo "Question: [${DOCKER_IMAGE_TYPE}]"
+        ;;
+
+    *)
+        echo "Asterisk: [${DOCKER_IMAGE_TYPE}]"
+        ;;
+
+esac

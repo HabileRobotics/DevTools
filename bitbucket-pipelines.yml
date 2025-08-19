@@ -1,0 +1,452 @@
+#################################################################################
+#
+#               Docker DevToolsBitbucket Automation (CI control)
+#
+#################################################################################
+#
+# Author:  Jose Pagan
+#   Date:  07/28/2025
+# Update:  07/28/2025
+#################################################################################
+
+#################################################################################
+#                                Image and Options
+#################################################################################
+image:
+  name: gcc:10.2
+
+options:
+  max-time: 90
+  docker: false
+#  size: 2x
+
+clone:
+  enabled: false
+
+
+#################################################################################
+#                                  definitions
+#################################################################################
+definitions:
+  steps:
+    ####################################
+    - step: &SmokeTestROS
+        name: 'Run basic smoke tests on build'
+        runs-on: 
+          - 'self.hosted'
+          - 'linux.shell'
+        script:
+          - printenv
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Testin ROS for ==> ${BUILD_PATH}"
+          - cd ${BUILD_PATH}
+          - pwd
+          ###- ros-automation/scripts/ros.build
+          - echo "Build Testing is done..."
+        after-script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Copy logs...
+          - echo " AFTER-SCRIPT ==> BITBUCKET_EXIT_CODE=${BITBUCKET_EXIT_CODE}"
+          - cp -pr  $RUNNER_LOG_PATH/tmp/*.log    $STAGE_LOGS
+
+    ####################################
+    - step: &PushDockerImage
+        ## PUSH docker image --  based on type (1=stm32, 2=humble, 3=jazzy, 4=yocto)
+        name: 'Push docker image Parallel'
+        runs-on: 
+          - 'self.hosted'
+          - 'linux.shell'
+        script:
+          - printenv
+          - echo "${IMAGE_TYPE} is [${BITBUCKET_PARALLEL_STEP}] of [${BITBUCKET_PARALLEL_STEP_COUNT}]"
+          - echo "BUILD_PATH=${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Step --> ${BITBUCKET_PARALLEL_STEP}"
+          ## Select the type based on paralle step number, fail if error
+          - '[ $BITBUCKET_PARALLEL_STEP == "0" ] && export IMAGE_TYPE=stm32'
+          - '[ $BITBUCKET_PARALLEL_STEP == "1" ] && export IMAGE_TYPE=humble'
+          - '[ $BITBUCKET_PARALLEL_STEP == "2" ] && export IMAGE_TYPE=jazzy'
+          - '[ $BITBUCKET_PARALLEL_STEP == "3" ] && export IMAGE_TYPE=yocto'
+          - '[ $BITBUCKET_PARALLEL_STEP == "4" ] && export IMAGE_TYPE=nxp'
+          - '[ -z $IMAGE_TYPE ] && echo "Invalid build type ${BITBUCKET_PARALLEL_STEP}" && exit 1'
+          - echo "Type --> ${IMAGE_TYPE} (${BITBUCKET_PARALLEL_STEP})"
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Building image for ==> ${BUILD_PATH}"
+          - cd ${BUILD_PATH}
+          - pwd
+          - BITBUCKET_AUTOMATION=true $BITBUCKET_REPO_SLUG/hub.create.image -t $IMAGE_TYPE -p
+          - echo "Build is done..."
+        after-script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Copy logs...
+          - echo " AFTER-SCRIPT ==> BITBUCKET_EXIT_CODE=${BITBUCKET_EXIT_CODE}"
+          - cp -pr  $RUNNER_LOG_PATH/tmp/*.log    $STAGE_LOGS
+
+    ####################################
+    - step: &BuildDockerImage
+        ## Build docker image --  based on type (1=stm32, 2=humble, 3=jazzy, 4=yocto, 5=nxp)
+        name: 'Build docker image Parallel'
+        runs-on: 
+          - 'self.hosted'
+          - 'linux.shell'
+        script:
+          - printenv
+          - echo "${IMAGE_TYPE} is [${BITBUCKET_PARALLEL_STEP}] of [${BITBUCKET_PARALLEL_STEP_COUNT}]"
+          - echo "BUILD_PATH=${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Step --> ${BITBUCKET_PARALLEL_STEP}"
+          ## Select the type based on paralle step number, fail if error
+          - '[ $BITBUCKET_PARALLEL_STEP == "0" ] && export IMAGE_TYPE=stm32'
+          - '[ $BITBUCKET_PARALLEL_STEP == "1" ] && export IMAGE_TYPE=humble'
+          - '[ $BITBUCKET_PARALLEL_STEP == "2" ] && export IMAGE_TYPE=jazzy'
+          - '[ $BITBUCKET_PARALLEL_STEP == "3" ] && export IMAGE_TYPE=yocto'
+          - '[ $BITBUCKET_PARALLEL_STEP == "4" ] && export IMAGE_TYPE=nxp'
+          - '[ -z $IMAGE_TYPE ] && echo "Invalid build type ${BITBUCKET_PARALLEL_STEP}" && exit 1'
+          - echo "Type --> ${IMAGE_TYPE} (${BITBUCKET_PARALLEL_STEP})"
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Building image for ==> ${BUILD_PATH}"
+          - cd ${BUILD_PATH}
+          - pwd
+          - BITBUCKET_AUTOMATION=true $BITBUCKET_REPO_SLUG/hub.create.image -t $IMAGE_TYPE
+          - echo "Build is done..."
+        after-script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Copy logs...
+          - echo " AFTER-SCRIPT ==> BITBUCKET_EXIT_CODE=${BITBUCKET_EXIT_CODE}"
+          - cp -pr  $RUNNER_LOG_PATH/tmp/*.log    $STAGE_LOGS
+
+    ####################################
+    - step: &BuildROS
+        name: 'Rebuild docker container on any Dockerfile change'
+        runs-on: 
+          - 'self.hosted'
+          - 'linux.shell'
+        script:
+          - printenv
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Building ROS for ==> ${BUILD_PATH}"
+          - cd ${BUILD_PATH}
+          - pwd
+          - BITBUCKET_AUTOMATION=true ros-automation/scripts/ros.build
+          - echo "Build is done..."
+        after-script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Copy logs...
+          - echo " AFTER-SCRIPT ==> BITBUCKET_EXIT_CODE=${BITBUCKET_EXIT_CODE}"
+          - cp -pr  $RUNNER_LOG_PATH/tmp/*.log    $STAGE_LOGS
+
+    ####################################
+    - step: &rebuildDocker
+        name: 'Rebuild docker container with any Dockerfile change'
+        runs-on:
+          - 'self.hosted'
+          - 'linux.shell'
+        script:
+          - printenv
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Rebuilding Docker image for ==> ${BUILD_PATH}"
+          - cd ${BUILD_PATH}
+          - pwd
+          - ros-automation/scripts/ros.create.docker.image
+        after-script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Copy logs...
+          - echo " AFTER-SCRIPT ==> BITBUCKET_EXIT_CODE=${BITBUCKET_EXIT_CODE}"
+          - cp -pr  $RUNNER_LOG_PATH/tmp/*.log    $STAGE_LOGS
+
+    ####################################
+    - step: &createRepo
+        name: 'Create directory for build sources'
+        runs-on: 
+          - 'self.hosted'
+          - 'linux.shell'
+        script:
+          - printenv
+          - echo "RUNNER_UUID=$RUNNER_UUID"
+          - echo "RUNNER_LOGS_PATH=${RUNNER_LOGS_PATH}"
+          - echo "BITBUCKET_CLONE_DIR=$BITBUCKET_CLONE_DIR"
+
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Create dir for repo, based on COMMIT
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - mkdir -p $BUILD_PATH
+          - echo "export BUILD_PATH=${BUILD_PATH}" >> $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Create dir for logs
+          - export STAGE_LOGS="${BUILD_PATH}/logs"
+          - mkdir -p $STAGE_LOGS
+          - echo "export STAGE_LOGS=${STAGE_LOGS}" >> $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          #  Point to dir to find RUNNER logs, already existing
+          - export RUNNER_LOGS_PATH="${RUNNER_LOGS_PATH}"
+          - echo "export RUNNER_LOGS_PATH=${RUNNER_LOGS_PATH}" >> $BUILD_PATH/vars.sh
+
+        after-script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Copy logs...
+          - echo " AFTER-SCRIPT ==> BITBUCKET_EXIT_CODE=${BITBUCKET_EXIT_CODE}"
+          - cp -pr  $RUNNER_LOG_PATH/tmp/*.log    $STAGE_LOGS
+          - exit 1
+
+    ####################################
+    - step: &cloneRepo
+        name: 'Clone Repository'
+        runs-on: 
+          - 'self.hosted'
+          - 'linux.shell'
+        script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Cloning Repository ==> ${BITBUCKET_GIT_SSH_ORIGIN}"
+          - echo "            Branch ==> ${BITBUCKET_BRANCH}"
+          - cd $BUILD_PATH
+          - git clone $BITBUCKET_GIT_SSH_ORIGIN -b $BITBUCKET_BRANCH --recurse-submodules
+          - echo "Done"
+
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Create path to source
+          - TMP=$(basename $BITBUCKET_GIT_SSH_ORIGIN)
+          - TMP=${TMP%.*}
+          - echo "TMP=$TMP"
+          - export SOURCE_PATH="$PWD/$TMP"
+          - echo "export SOURCE_PATH=${SOURCE_PATH}" >> $BUILD_PATH/vars.sh
+
+        after-script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Copy logs...
+          - echo " AFTER-SCRIPT ==> BITBUCKET_EXIT_CODE=${BITBUCKET_EXIT_CODE}"
+          - cp -pr  $BITBUCKET_CLONE_DIR/../tmp/*.log    $STEP_LOGS
+          
+
+    ####################################
+    - step: &setVars
+        name: Set variables for all pipeline steps
+        runs-on: 
+          - 'self.hosted'
+          - 'linux.shell'
+        script:
+          - printenv
+          ## Start with a fresh log file
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - export PIPELINE_LOGS="${BUILD_PATH}/logs"
+          - export STEP_LOGS="${BUILD_PATH}/logs/step-$BITBUCKET_STEP_RUN_NUMBER"
+          - echo "BUILD_PATH=${BUILD_PATH}"
+          - echo "PIPELINE_LOGS=${PIPELINE_LOGS}"
+          - echo "PIPELINE_STEP=${STEP_LOGS}"
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          - echo "Beginning Default Pipeline ${BITBUCKET_COMMIT}"
+          #- echo "  show -->  ${BITBUCKET_CLONE_DIR}"
+          #- echo "  show -->  ${BITBUCKET_WORKSPACE}"
+
+          #### Create some pipeline directories
+          - echo "Creating directory for pipeline --> $BUILD_PATH"                   ## Some Debug info
+          - mkdir -p $BUILD_PATH                                                     ## create needed dir 
+
+          - echo "Creating directory for pipeline logs --> $PIPELINE_LOGS"           ## Some Debug info
+          - mkdir -p $PIPELINE_LOGS                                                  ## create needed dir
+
+          - echo "Creating directory for step logs --> $STEP_LOGS"                   ## Some Debug info
+          - mkdir -p $STEP_LOGS                                                      ## create needed dir 
+
+          #### Variables that need to persist across pipeline "steps" go to a file
+          - echo "export BUILD_PATH=${BUILD_PATH}"    >> $BUILD_PATH/vars.sh   ## Add to artifacts
+          - echo "export PIPELINE_LOGS=${PIPELINE_LOGS}"    >> $BUILD_PATH/vars.sh   ## Add to artifacts
+          - echo "export STEP_LOGS=${STEP_LOGS}"            >> $BUILD_PATH/vars.sh   ## Add to artifacts
+
+        after-script:
+          - export BUILD_PATH="${BUILD_BASE}/${BITBUCKET_COMMIT}"
+          - source $BUILD_PATH/vars.sh
+          ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ## ##
+          # Copy logs...
+          - echo " AFTER-SCRIPT ==> BITBUCKET_EXIT_CODE=${BITBUCKET_EXIT_CODE}"
+          - cp -pr  $BITBUCKET_CLONE_DIR/../tmp/*.log    $STEP_LOGS
+
+        artifacts:
+          - $BUILD_PATH/vars.bin
+
+
+#################################################################################
+##                                 Pipelines
+#################################################################################
+pipelines:
+
+  ###################################################################################################
+  ## Pipelines for specific branch prefixes
+#  pull-requests:
+#    main: # this trigger for pull from development branch
+#      - step:
+#          name: 'Pull-Request default pipeline'
+#          runs-on: 
+#            - 'self.hosted'
+#            - 'linux.shell'
+#          script:
+#            - echo "Running Pull Request on Development brahch"
+
+#    '{development,feature/*}': # this will trigger the pipeline for branch specific Pull Requests    
+#    default: # this will trigger the pipeline for defaullt Pull Requests
+
+  ###################################################################################################
+  ## Pipelines for specific branch prefixes
+  branches:
+    '{develop,feature/*,bugfix/*,*}':
+      - stage:
+          name: 'Feature/Bugfix - Init & Clone Repository'
+          steps:
+            - step: *createRepo
+            - step: *setVars
+            - step: *cloneRepo
+            - step:
+                name: 'Init & Clone Repo'
+                runs-on: 
+                  - 'self.hosted'
+                  - 'linux.shell'
+                script:
+                  - echo "Init & Clone Repo - Complete!"
+      - parallel:  # Building the docker images happens in parallel
+          ## All steps fail if a single parallel step fails
+          fail-fast: true
+          steps:
+            - step:
+                <<: *BuildDockerImage
+                name: 'Build STM32 Image'
+            - step:
+                <<: *BuildDockerImage
+                name: 'Build ROS Humble Image'
+            - step:
+                <<: *BuildDockerImage
+                name: 'Build ROS Jazzy Image'
+            - step:
+                <<: *BuildDockerImage
+                name: 'Build Yocto Image'
+            - step:
+                <<: *BuildDockerImage
+                name: 'Build NXP Image'
+      - step:
+                name: 'Feature/Bugfix - Dockerhub Login'
+                runs-on: 
+                  - 'self.hosted'
+                  - 'linux.shell'
+                script:
+                  - echo "Login to Dockerhub - ${DOCKERHUB_UNAME}"
+                  - echo "Login key -  ${DOCKERHUB_KEY}"
+                  - echo "${DOCKERHUB_KEY}" | docker login --username "${DOCKERHUB_UNAME}" --password-stdin
+      - parallel:  # Push to Dockerhub after all images are built
+          ## All steps fail if a single parallel step fails
+          fail-fast: true
+          steps:
+            - step:
+                <<: *PushDockerImage
+                name: 'Push STM32 Image'
+            - step:
+                <<: *PushDockerImage
+                name: 'Push ROS Humble Image'
+            - step:
+                <<: *PushDockerImage
+                name: 'Push ROS Jazzy Image'
+            - step:
+                <<: *PushDockerImage
+                name: 'Push Yocto Image'
+            - step:
+                <<: *PushDockerImage
+                name: 'Push NXP Image'
+      - step:
+          name: 'Feature/Bugfix - Docker Build Images Complete'
+          runs-on: 
+              - 'self.hosted'
+              - 'linux.shell'
+          script:
+              - echo "Dockerhub logout."
+              - docker logout
+              - echo "Rebuild Docker - Complete!"
+
+    test/*:
+      - stage:
+          name: 'Init, Clone and Build'
+          steps:
+            - step: *createRepo
+            - step: *setVars
+            - step: *cloneRepo
+            - step: *rebuildDocker
+            - step: *BuildROS
+            - step:
+                name: 'Init, Clone and Build'
+                runs-on: 
+                  - 'self.hosted'
+                  - 'linux.shell'
+                script:
+                  - echo "Init, Clone and Build - Complete!"
+
+    release/*:
+      - stage:
+          name: 'Init, Clone and Build'
+          steps:
+            - step: *createRepo
+            - step: *setVars
+            - step: *cloneRepo
+            - step: *rebuildDocker
+            - step: *BuildROS
+            - step:
+                name: 'Init, Clone and Build' 
+                runs-on: 
+                  - 'self.hosted'
+                  - 'linux.shell'
+                script:
+                  - echo "fails by design."
+                  - exit 1
+
+    hotfix/*:
+      - stage:
+          name: 'Init, Clone and Build'
+          steps:
+            - step: *createRepo
+            - step: *setVars
+            - step: *cloneRepo
+            - step: *rebuildDocker
+            - step: *BuildROS
+            - step:
+                name: 'Init, Clone and Build'
+                runs-on: 
+                  - 'self.hosted'
+                  - 'linux.shell'
+                script:
+                  - echo "fails by design."
+                  - exit 1
+
+
+  default:
+    - stage:
+        name: 'Default Stage 1'
+        steps:
+          - step:
+              name: 'Default Stage 1'
+              runs-on: 
+                - 'self.hosted'
+                - 'linux.shell'
+              script:
+                - echo "Branch ${BITBUCKET_BRANCH} not supported in automation pipeline."
+                - exit -1

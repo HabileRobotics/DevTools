@@ -1,0 +1,287 @@
+#!/usr/bin/bash
+################################################################################
+## Run the user's local container.
+##
+## Ths script accepts a "build" command to run, in the container. The command
+## to run can be in two forms.
+##    1. set in environment:   DOCKER_RUN_COMMAND=<build command>  docker.run
+##    2. comand arguments:     docker run <build command>
+##
+## Author:  Jose Pagan
+##   Date:  12/02/2024
+## Update:  07/09/2025
+################################################################################
+SCRIPT_NAME=$(basename $0)
+SCRIPT_PATH=$( cd $(dirname $(readlink `[[ $OSTYPE == linux* ]] && echo "-f"` $0)) ; pwd -P)
+
+## Source the common definitions:
+source ${SCRIPT_PATH}/common
+
+if [[ -v DOCKER_RUN_COMMAND ]] && [[ -n "${DOCKER_RUN_COMMAND}" ]]
+then
+    ## only ENV Variable provided
+    echo " RUN COMMAND:  [${DOCKER_RUN_COMMAND}]"
+    DOCKER_RUN_COMMAND="${DOCKER_RUN_COMMAND} ; RET=\$? ; [ 0 -ne \$RET ] && echo \$RET > err.code"
+else
+    ## No command provided, default to open a bash shell
+    DOCKER_RUN_COMMAND="/bin/bash"
+fi
+
+
+################################################################################
+## Help text, as function
+help_text()
+{
+    echo ""
+    echo "Usage: $(basename $0) - [-d {version } ] [ -h ] [ -l ] [ -n ] [ -s ] [ -t {type} ] [ -v ]"
+    echo "  Run a Docker container."
+    echo ""
+    echo "  Valid arguments are:"
+    echo "    -d {version}  use specific DDS version; [ cyclone | fast (default) ]"
+    echo "    -h            display this message"
+    echo "    -i {version}  use docker image version (default is ${DOCKERHUB_TOOLS_VERSION})"
+    echo "    -n            No Build, merely show the Docker command(s) to be used"
+    echo "    -s            open a shell on a running container (attach to container with new shell)"
+    echo "    -t {type}     image to run; [ stm32 | nxp | jazzy | humble(default) | yocto ]"
+    echo "    -v            enable verbose messages (default=disabled)"
+    exit 1
+}
+
+
+################################################################################
+## ERROR:Message for failed docker build
+err_run_failed()
+{
+    echo "------------------------ Docker Image Run Failed ------------------------"
+    echo "  ERROR: Docker image failed to run."
+    echo "-------------------------------------------------------------------------"
+}
+
+
+################################################################################
+## Check if the image "type" is present on this system
+##
+##  Arguments:
+##    $1 -- image name to verify
+##
+## Return:
+##    [ID]         -- a valid docker image ID was found
+##    unavailable  -- the image string ($1) was not found in Docker
+##
+## ## ## ## ## ## ## ## ##
+is_image_present()
+{
+    ## Docker command always returns sucessful error code therefor we need to
+    ## check if string is empty to determine failure.
+    ## command: docker image ls DockerForROS2/linux-amd64-ros2-humble-stm32 -q
+    IMAGE_ID=`docker image ls $1 -q`
+    if [[ -z $IMAGE_ID ]]
+    then
+        IMAGE_ID="unavailable"
+        echo "------------------------ Docker Image Run Missing -----------------------"
+        echo "  ERROR: Docker image not found."
+        echo "         The following Docker image was not found in Docker registry"
+        echo "           \"$1\""
+        echo "         Try building a local image with command:"
+        echo "           \"docker.create.user.image -t ${DOCKER_IMAGE_TYPE}\" "
+        echo "-------------------------------------------------------------------------"
+        return 1
+    fi
+
+    return 0
+}
+
+
+################################################################################
+## Parse command line arguments (flags):
+while getopts ":d:hi:nst:v" OPT; do
+    case $OPT in
+    d) ## DDS Version
+        DDS_ENV=$OPTARG
+#        echo "TYPE: [$DDS_ENV]"
+#        echo "DDS: ${DDSS[$DDS_ENV]:-$DDS_DEFAULT}"
+        DDS=$(get_dds_type $DDS_ENV)
+        RET=$?
+        if [[ $RET -ne 0 ]]; then
+            echo " WARN: DDS version (${DDS_ENV}) not supported, using default (${DDS_DEFAULT})"
+            DDS_TYPE=$DDS_DEFAULT
+        else
+            DDS_TYPE=$DDS_ENV
+        fi
+        
+        echo "RET: [$RET], TYPE: [$DDS_TYPE]"
+        ;;
+    h) ## Help message
+        help_text
+        exit 1
+        ;;
+    i) ## Specify docker image version to use
+        DOCKER_IMAGE_VERSION=${OPTARG:-$DOCKER_IMAGE_VERSION}
+        if [[ ${DOCKER_IMAGE_VERSION} == ${DOCKERHUB_TOOLS_VERSION} ]]; then
+            echo "INFO: Using default Docker image: ${DOCKER_IMAGE_VERSION}"  ## 0.0.6a
+        else
+            echo "INFO: Using Docker version: ${DOCKER_IMAGE_VERSION}"
+        fi
+        ;;
+    n) ## "-n" | "--no-run")
+        NORUN=1
+        CMD_SHOW="echo "
+        ;;
+    s) ## "-s" | "--shell")
+        CMD_SHELL=1
+        ;;
+    
+    t) ## "-n" | "--no-run")
+        DOCKER_IMAGE_TYPE=$OPTARG
+        if [[ -n "${ROS_DISTRO}" ]]
+        then
+            echo "***** WARN: command line argument \"ROS_DISTRO\" superceded by type flag (-t)"
+            unset ROS_DISTRO
+        fi
+        ;;
+    v)
+        ## "-v" | "--verbose-messages-for-debugging")
+        DEBUG=1
+        ;;
+    ?)
+        echo "ERROR: [-$OPTARG] command invalid or missing argument"
+        exit 1
+        ;;
+    *)
+        echo "ERROR: missing argument: [$OPTARG]"
+        exit 1
+        ;;
+    esac
+done
+
+
+################################################################################
+## Catch any error in specifying the docker image (type)
+LINUX_DISTRO=$(get_ubuntu_from_ros2_distro "${DOCKER_IMAGE_TYPE}")
+RET=$?
+## Verify image type
+if [[ $RET -ne 0 ]]
+then
+    echo ${LINUX_DISTRO}
+    exit 1
+fi
+
+IMAGE_NAME=$(get_tag_from_ros2_distro "${DOCKER_IMAGE_TYPE}")
+RET=$?
+## Verify image type
+if [[ $RET -ne 0 ]]
+then
+    echo ${IMAGE_NAME}
+    exit 1
+    fi
+
+echo "  Image Type:  [${DOCKER_IMAGE_TYPE}]"
+#echo "         ROS:  [${ROS_DISTRO}]"
+echo "       Linux:  [${LINUX_DISTRO}]"
+echo "        User:  [${USERNAME}]"
+echo "         UID:  [${UUID}]"
+echo "         GID:  [${GGID}]"
+
+
+################################################################################
+## allow user to set the container name externally
+CONTAINER_NAME=${CONTAINER_NAME:-${DOCKER_IMAGE_TYPE}-${USERNAME}}
+
+## Create the image name to run
+BASE_IMAGE="${IMAGE_NAME}"
+
+if [[ "${USERNAME}" != ${AUTOMATION_USER} ]]
+then
+    BASE_IMAGE="${BASE_IMAGE}-${USERNAME}"
+fi
+IMAGE_NAME="${DOCKERHUB_NAMESPACE}/${BASE_IMAGE}"
+
+echo "---  Run Docker Image  ---"
+echo " Working Dir:  [${DOCKER_WORKING_DIR}]"
+echo "   Namespace:  [${DOCKERHUB_NAMESPACE}]"
+echo "        Base:  [${BASE_IMAGE}]"
+echo "     Version:  [${DOCKER_IMAGE_VERSION}]"
+echo "       Image:  [${IMAGE_NAME}:${DOCKER_IMAGE_VERSION}]"
+echo "         DDS:  [${DDS_TYPE}]"
+echo "        Name:  [${CONTAINER_NAME}]"
+
+
+################################################################################
+## Verify the image exists
+is_image_present ${IMAGE_NAME}:${DOCKER_IMAGE_VERSION}
+RET=$?
+if [[ $RET -eq 0 ]]
+then
+    
+    [ -n "${CMD_SHOW}" ] && echo "---------------------------- Docker Command  ----------------------------"
+    if [[ -v BITBUCKET_AUTOMATION ]] &&
+          [[ "${BITBUCKET_AUTOMATION}" == "true" || ${BITBUCKET_AUTOMATION} = 1 ]]
+    then
+        INTERACTIVE_MODE=""
+        echo "  Automation:  [ENABLED]"
+    else
+        INTERACTIVE_MODE="-it"
+        [ -z "${CMD_SHOW}" ] && xhost + local:docker > /dev/null
+        echo "  Automation:  [DISABLED]"
+    fi
+
+    echo "-------------------------------------------------------------------------"
+
+    if [[ ${CMD_SHELL} -eq 1 ]]
+    then
+        echo "Docker SHELL into \"${IMAGE_NAME}:${DOCKER_IMAGE_VERSION}\"..."
+        ${CMD_SHOW} docker exec  \
+           ${INTERACTIVE_MODE} \
+           ${CONTAINER_NAME} \
+           /bin/bash
+    else
+        echo "Docker STARTING \"${IMAGE_NAME}:${DOCKER_IMAGE_VERSION}\"..."
+        if [[ -f err.code ]];
+        then
+            rm err.code
+        fi
+            
+        ${CMD_SHOW} docker run \
+           --rm \
+           ${INTERACTIVE_MODE} \
+           --network=host \
+           --privileged \
+           --env DISPLAY \
+           -h ${HOSTNAME} \
+           -e USER=${USERNAME} \
+           -e USERNAME=${USERNAME} \
+           -e USE_DDS=${DDS_TYPE} \
+           --name ${CONTAINER_NAME} \
+           -v ${HOME}/.vscode:$HOME/.vscode \
+           -v ${HOME}/.gitconfig:$HOME/.gitconfig \
+           -v ${HOME}/.gitignore:$HOME/.gitignore \
+           -v ${HOME}/.bash_aliases:$HOME/.bash_aliases \
+           -v ${HOME}/.ssh:$HOME/.ssh \
+           -v ${HOME}/.config:$HOME/.config \
+           -v ${HOME}/.emacs:$HOME/.emacs \
+           -v ${HOME}/.emacs.d:$HOME/.emacs.d \
+           -v ${HOME}/.Xauthority:$HOME/.Xauthority \
+           -v /usr/src:/usr/src \
+           -v /lib/modules:/lib/modules \
+           -v /dev:/dev \
+           -v ${PWD}:${DOCKER_WORKING_DIR} \
+           -w ${DOCKER_WORKING_DIR} \
+           ${IMAGE_NAME}:${DOCKER_IMAGE_VERSION} \
+           /usr/bin/bash -ic "${DOCKER_RUN_COMMAND}"
+
+        if [[ -f err.code ]]; then
+            echo "ERROR: Docker container faiure:"
+            cat err.code
+        elif [[ -v DEBUG ]] && [[ DEBUG -ne 0 ]]; then
+            echo "Docker container terminated sucessfully."
+        fi
+        
+            
+    fi
+
+    [ -n "${CMD_SHOW}" ] &&  echo "-------------------------------------------------------------------------"
+
+fi
+
+exit 0
+

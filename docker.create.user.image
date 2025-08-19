@@ -1,0 +1,319 @@
+#!/usr/bin/bash
+################################################################################
+## Create the user image from a baseline (common) docker images stored in the
+##   dockerhub. Each user image derives from the stored base image in order to
+##   provide a uniform toolset for development of ROS2 nodes. The base images
+##   are created by the "hub.create.image" script and are named using the type
+##   conversion table in script "common".
+##
+## To prevent confusion, images created by this script will have the user's
+##   name appended. This script's "Dockerfile" creates a local user inside the
+##   docker image.
+##
+## Image types include:
+##   humble - ros2 development environment used with ubuntu:22.04 (jammy)
+##   jazzy  - ros2 development environment used with ubuntu:24.04 (noble)
+##   nxp    - environment for working on NXP based controllers
+##   stm32  - environment for working on STM32 based I/O controllers
+##   yocto  - embedded linux environment for NCXP based controllers
+##
+################################################################################
+##
+## Author:  Jose Pagan
+##   Date:  12/02/2024
+## Update:  04/01/2025
+################################################################################
+SCRIPT_NAME=$(basename $0)
+SCRIPT_PATH=$( cd $(dirname $(readlink `[[ $OSTYPE == linux* ]] && echo "-f"` $0)) ; pwd -P)
+
+## Source the common definitions:
+source ${SCRIPT_PATH}/common
+
+
+################################################################################
+## Help text, as function
+help_text()
+{
+    echo ""
+    echo "Usage: $(basename $0) [ -c ] [ -h ] [ -l ] [ -n ] [ -t {type} ] [ -v ]"
+    echo "  Build local user's Docker image."
+    echo ""
+    echo "  Valid arguments are:"
+    echo "    -c            build clean image (--no-cahce)"
+    echo "    -h            display this message"
+    echo "    -i {version}  use docker image version (default is ${DOCKERHUB_TOOLS_VERSION})"
+    echo "    -n            No Build, merely show the Docker command(s) to be used"
+    echo "    -t {type}     user image type to build; [ stm32 | nxp | jazzy | humble(default) | yocto ]"
+    echo "    -v            enable verbose messages (default=disabled)"
+    exit 1
+}
+
+
+################################################################################
+##
+build_image_nxp()
+{
+    [ -n "${CMD_SHOW}" ] || [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] \
+        && echo -"----------------------- Build NXP Image ------------------------"
+
+    ## Run the build command
+    ${CMD_SHOW} docker build \
+        --network host \
+        ${CLEAN_IMAGE} \
+        --build-arg USERNAME=${USERNAME} \
+        --build-arg UUID=${UUID} \
+        --build-arg GGID=${GGID} \
+        --build-arg BASE_IMAGE=${DOCKERHUB_URL}/${REMOTE_IMAGE_TAG} \
+        --build-arg WORKING=${DOCKER_WORKING_DIR} \
+        --build-arg NXP=1 \
+        --tag ${LOCAL_IMAGE_TAG} \
+        ${SCRIPT_PATH}
+}
+
+
+################################################################################
+##
+##   --build-arg BASE_IMAGE=${DOCKERHUB_URL}/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}:${DOCKER_IMAGE_VERSION} \
+##         --tag ${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}-${USERNAME}:${DOCKER_IMAGE_VERSION} \
+build_image_stm32()
+{
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "----------------------- Build STM32 Image -----------------------"
+
+    ## Run the build command
+    ${CMD_SHOW} docker build \
+        --network host \
+        ${CLEAN_IMAGE} \
+        --build-arg USERNAME=${USERNAME} \
+        --build-arg UUID=${UUID} \
+        --build-arg GGID=${GGID} \
+        --build-arg BASE_IMAGE=${DOCKERHUB_URL}/${REMOTE_IMAGE_TAG} \
+        --build-arg WORKING=${DOCKER_WORKING_DIR} \
+        --tag ${LOCAL_IMAGE_TAG} \
+        ${SCRIPT_PATH}
+}
+
+
+################################################################################
+##
+build_image_ros2()
+{
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "----------------------- Build ROS2 Image -----------------------"
+
+    ## Run the build command
+    # --build-arg BASE_IMAGE=${DOCKERHUB_URL}/${DOCKERHUB_NAMESPACE}/${IMAGE_NAME} \
+    #	BASE_IMAGE_TAG=${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}
+
+    ${CMD_SHOW} docker build \
+        ${CLEAN_IMAGE} \
+        --build-arg USERNAME=${USERNAME} \
+        --build-arg UUID=${UUID} \
+        --build-arg GGID=${GGID} \
+        --build-arg BASE_IMAGE=${DOCKERHUB_URL}/${REMOTE_IMAGE_TAG} \
+        --build-arg WORKING=${DOCKER_WORKING_DIR} \
+        --tag ${LOCAL_IMAGE_TAG} \
+        ${SCRIPT_PATH}
+    ret=$?
+
+    return ${ret}
+}
+
+
+################################################################################
+##
+build_image_yocto()
+{
+    [ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+        && echo "---------------------- Build Yocto Image ------------------------"
+
+    ${CMD_SHOW} docker build \
+        --network=host \
+        ${CLEAN_IMAGE} \
+        --build-arg USERNAME=${USERNAME} \
+        --build-arg UUID=${UUID} \
+        --build-arg GGID=${GGID} \
+        --build-arg BASE_IMAGE=${DOCKERHUB_URL}/${REMOTE_IMAGE_TAG} \
+        --build-arg WORKING=${DOCKER_WORKING_DIR} \
+        --tag ${LOCAL_IMAGE_TAG} \
+        ${SCRIPT_PATH}
+
+    ## Command to build the local docker volume:
+    ${CMD_SHOW} docker volume create \
+           --driver local \
+           --opt type=nfs \
+           --opt o=addr=controls-Precision-7920-Tower,rw,nfsvers=4,nolock,soft \
+           --opt device=:/mnt/datadrive/server-cache srv-cache
+}
+
+
+################################################################################
+## Parse command line arguments (flags):
+while getopts ":chi:nt:v" OPT; do
+    case $OPT in
+    c) ## Build clean image, without cache
+        CLEAN_IMAGE="--no-cache --pull"
+        ;;
+    h)
+        ## Help message
+        help_text
+        exit 1
+        ;;
+    i) ## Specify docker image version to use
+        DOCKER_IMAGE_VERSION=${OPTARG:-$DOCKER_IMAGE_VERSION}
+        if [[ ${DOCKER_IMAGE_VERSION} == ${DOCKERHUB_TOOLS_VERSION} ]]; then
+            echo "INFO: Using default Docker image: ${DOCKER_IMAGE_VERSION}"  ## 0.0.6a
+        else
+            echo "INFO: Using Docker version: ${DOCKER_IMAGE_VERSION}"
+        fi
+        ;;
+    n)
+        ## "-n" | "--no-run")
+        NORUN=1
+        CMD_SHOW="echo "
+        ;;
+    t)
+        ## "-n" | "--no-run")
+        DOCKER_IMAGE_TYPE=$OPTARG
+        if [[ -n "${ROS_DISTRO}" ]]
+        then
+            echo "***** WARN: command line argument \"ROS_DISTRO\" superceded by type flag (-t)"
+            unset ROS_DISTRO
+        fi
+        ;;
+    v)
+        ## "-v" | "--verbose-messages-for-debugging")
+        DEBUG=1
+        ;;
+    ?)
+        echo "ERROR: [-$OPTARG] command invalid or missing argument"
+        exit 1
+        ;;
+    *)
+        echo "ERROR: missing argument: [$OPTARG]"
+        exit 1
+        ;;
+    esac
+done
+
+
+################################################################################
+## You need to be logged in to pull any base image from the private dockerhub
+get_dockerhub_username  ; RET=$?
+if [[ $RET -ne 0 ]]
+then
+    ## The user is not logged into dockerhub.
+    if [[ $DOCKERHUB_NAMESPACE == $DEFAULT_DOCKERHUB_NAMESPACE ]]
+    then
+	## Exit (fail) the script if pulling from the provate dockerhub
+	## without a login
+	exit 1
+    fi
+fi
+	
+echo "Dockerbub username: [$DOCKERHUB_USERNAME]"
+
+################################################################################
+## Catch any error in specifying the docker image (type)
+LINUX_DISTRO=$(get_ubuntu_from_ros2_distro "${DOCKER_IMAGE_TYPE}")
+RET=$?
+## Verify we found a Linux value
+if [[ $RET -ne 0 ]]
+then
+    echo ${LINUX_DISTRO}
+    exit 1
+fi
+
+IMAGE_NAME=$(get_tag_from_ros2_distro "${DOCKER_IMAGE_TYPE}")
+RET=$?
+## Verify we found an image name
+if [[ $RET -ne 0 ]]
+then
+    echo ${IMAGE_NAME}
+    exit 1
+    fi
+
+## Set the image TAG:
+BASE_IMAGE_TAG=${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}
+REMOTE_IMAGE_TAG=${BASE_IMAGE_TAG}:${DOCKER_IMAGE_VERSION}
+LOCAL_IMAGE_TAG=${BASE_IMAGE_TAG}-${USERNAME}:${DOCKER_IMAGE_VERSION}
+
+## Display some of the image variables:
+echo "  Image Type: [${DOCKER_IMAGE_TYPE}]"
+## echo "         ROS: [${ROS_DISTRO}]"
+echo "       Linux: [${LINUX_DISTRO}]"
+echo "    -- -- Docker -- --"
+echo "    Work Dir: [${DOCKER_WORKING_DIR}]"
+echo "         URL: [${DOCKERHUB_URL}]"
+echo "   Namespace: [${DOCKERHUB_NAMESPACE}]"
+echo "       Image: [${IMAGE_NAME}]"
+echo "     Version: [${DOCKER_IMAGE_VERSION}]"
+echo "         DDS: [${DDS_TYPE}]"
+if [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ]
+then
+    echo "    Base TAG: [${BASE_IMAGE_TAG}]"
+    echo "  Remote TAG: [${REMOTE_IMAGE_TAG}]"
+    echo "   Local TAG: [${LOCAL_IMAGE_TAG}]"
+fi
+
+
+################################################################################
+##
+echo "-----------------------------------------------------------------"
+if [[ -n ${CLEAN_IMAGE} ]]
+then
+    IMG_SHA=`docker image ls -q ${LOCAL_IMAGE_TAG}`
+    [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] && echo "DEBUG: [${CLEAN_IMAGE}] [${LOCAL_IMAGE_TAG}] [${IMG_SHA}]"
+    if [[ -z ${IMG_SHA} ]]
+    then
+        echo " INFO: image \"${LOCAL_IMAGE_TAG}\" not found"
+    else
+        echo " INFO: Removing image \"${LOCAL_IMAGE_TAG}\" [${IMG_SHA}]"
+        docker image rm ${IMG_SHA} >> /dev/null
+        docker image prune -f >> /dev/null
+    fi
+    
+fi
+
+
+################################################################################
+##
+##
+echo "-----------------------------------------------------------------"
+ret=0
+case ${DOCKER_IMAGE_TYPE} in
+    "nxp")
+        build_image_nxp
+        ;;
+
+
+    "stm32")
+##        echo "${DOCKER_IMAGE_TYPE} not built"
+        ROS_DISTRO=humble
+        build_image_stm32
+        ;;
+
+    "jazzy" | "humble")
+        echo ">>> Building ROS image: ${DOCKER_IMAGE_TYPE}"
+        build_image_ros2
+        ret=$?
+        ;;
+
+    "yocto")
+        echo "ROS Jazzy/Humble not built"
+        build_image_yocto
+        ;;
+
+    ?)
+        echo "Question"
+        ;;
+
+    *)
+        echo "Asterisk"
+        ;;
+esac
+
+[ -n "${CMD_SHOW}" ] || ( [ -v DEBUG  ] && [ "$DEBUG" -ne "0" ] ) \
+    && echo "--------------------- Build Image Complete --------------------"
+
+exit ${ret}

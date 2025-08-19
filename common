@@ -1,0 +1,210 @@
+#!/usr/bin/bash
+
+################################################################################
+## Docker: common functionality (script)
+##
+## Author:  Jose Pagan
+##   Date:  07/28/2025
+## Update:  07/28/2025
+################################################################################
+
+################################################################################
+########################## Constants and Declarations ##########################
+################################################################################
+HOST_OS=linux
+HOST_ARCH=amd64
+GENERIC_USER=habilerobotics
+AUTOMATION_USER=build
+AUTOMATION_SERVER="none"
+DEFAULT_DOCKERHUB_NAMESPACE=habilerobotics
+DOCKERHUB_TOOLS_VERSION=0.0.1
+DOCKER_WORKING_DIR=/workspace
+DOCKERHUB_URL=${DOCKERHUB_URL:-docker.io}
+DOCKERHUB_USERNAME=unvalidated
+DDS_CONFIG_SOURCE_DIR=dds_config
+DDS_DEFAULT_TARGET_DIR=/opt/dds/${DDS_CONFIG_SOURCE_DIR}
+DDS_DEFAULT_FLAVOR=fast
+
+
+## 
+LINUX_DISTRO=${LINUX_DISTRO:-jammy}              # noble
+DOCKER_IMAGE_TYPE=${DOCKER_IMAGE_TYPE:-humble}   # jazzy
+
+##
+DOCKERHUB_NAMESPACE=${DOCKERHUB_NAMESPACE:-${DEFAULT_DOCKERHUB_NAMESPACE}}
+DOCKER_IMAGE_VERSION=${DOCKER_IMAGE_VERSION:-${DOCKERHUB_TOOLS_VERSION}}
+
+HOST_NAME=`hostname`
+USERNAME=${USERNAME:-`id -un`}
+UUID=`id -u`
+GGID=`id -g`
+VSCODE_VERSION=`code --version | head --lines 1`
+echo "Desktop version of Visual Studio Code: [$VSCODE_VERSION]"
+
+## ## DDS files Location, source directory
+## Location of DDS files in the docker_dev-tools repo:
+DDS_CONFIG_SOURCE_PATH="${SCRIPT_PATH}/${DDS_CONFIG_SOURCE_DIR}"
+## Location of the DDS config files in the docker image
+DDS_CONFIG_DOCKER_PATH=${DDS_DOCKER_PATH:-$DDS_DEFAULT_TARGET_DIR}
+
+declare -A DDSS=( ["fast"]="rmw_fastrtps_cpp" \
+                  ["cyclone"]="rmw_cyclonedds_cpp" \
+                )
+
+declare -A TYPE_TO_LINUX=( \
+     ["jazzy"]="noble" \
+    ["humble"]="jammy" \
+     ["stm32"]="jammy" \
+     ["yocto"]="jammy" \
+       ["nxp"]="jammy" \
+  )
+
+# declare -A TYPE_TO_TAG=( \
+#      ["jazzy"]="linux-amd64-ros2-jazzy" \
+#     ["humble"]="linux-amd64-ros2-humble" \
+#      ["stm32"]="linux-amd64-ros2-humble-stm32" \
+#      ["yocto"]="linux-amd64-humble-yocto-poky" \
+#      ["nxp"]="linux-amd64-nxp" \
+#   )
+
+declare -A TYPE_TO_TAG=( \
+     ["jazzy"]="ros2-jazzy" \
+    ["humble"]="ros2-humble" \
+     ["stm32"]="ros2-humble-stm32" \
+     ["yocto"]="yocto-poky" \
+     ["nxp"]="nxp" \
+  )
+################################################################################
+echo "--------------------------------------------------------------------------"
+echo "SCRIPT_PATH=$SCRIPT_PATH"
+echo "SCRIPT_NAME=$SCRIPT_NAME"
+echo "--------------------------------------------------------------------------"
+################################################################################
+
+################################################################################
+## Debug code: to indicate directory where script was run
+################################################################################
+if [[ -v DEBUG ]]
+then
+    if [[ "$(basename $PWD)" == "tools" ]]
+    then
+      echo "DBG: Script run from: inside Tools directory [${PWD}]"
+   else
+      echo "DBG: Script run from: outside Tools directory [${PWD}]"
+   fi
+fi
+
+
+################################################################################
+## Function: given ROS distro, retrun Ubuntu distro supported.
+##    Use argument $1 as ROS2 distro. If provided, it should be found in
+##    the dictionary.
+##    
+##   RETURN: (0) matching Ubuntu distro string 
+##           (1) no distro matched
+################################################################################
+get_ubuntu_from_ros2_distro()
+{
+    if [[ -z "$1" ]]
+    then
+	## use default distro if none is specified 
+        echo "${TYPE_TO_LINUX[${DEFAULT_DOCKER_IMAGE_TYPE}]}"
+    elif [[ "${TYPE_TO_LINUX[${1,,}]}" == "" ]]
+    then
+	## When defined, perform dictionary lookup:
+        echo "ERROR: docker image (${1}) not supported"
+        return 1
+    else
+        echo ${TYPE_TO_LINUX[${1,,}]}
+    fi
+
+    return 0
+}
+
+
+################################################################################
+## Function: given ROS distro, retrun Ubuntu distro supporteddocker tag.
+##    Use argument $1 as ROS2 distro. If provided, it should be found in
+##    the dictionary.
+##    
+##   RETURN: (0) matching tag string 
+##           (1) no tag matched
+################################################################################
+get_tag_from_ros2_distro()
+{
+    if [[ -z "$1" ]]
+    then
+	## use default distro if none is specified 
+        echo "${TYPE_TO_TAG[${DEFAULT_DOCKER_IMAGE_TYPE}]}"
+    elif [[ "${TYPE_TO_TAG[${1,,}]}" == "" ]]
+    then
+	## When defined, perform dictionary lookup:
+        echo "ERROR: docker image (${1}) not supported"
+        return 1
+    else
+        echo ${TYPE_TO_TAG[${1,,}]}
+    fi
+
+    return 0
+}
+
+
+################################################################################
+## Function: check if user has logged into Dockerhub
+##    
+##   RETURN: (0) matching tag string 
+##           (1) no tag matched
+################################################################################
+get_dockerhub_username()
+{
+    DOCKERHUB_USERNAME=`docker info 2>> /dev/null | grep -i username | cut -d':' -f2 `
+    DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME:-"logout"}
+
+    if [[ "$DOCKERHUB_USERNAME" == "logout" ]]
+    then
+	## User needs to login to Dockerhub to pull private images
+	echo "##########################################################################"
+	echo "## This script pulls images from Dockerhub. To pull private images,     ##"
+	echo "## you must login to your Dockerhub account.                            ##"
+	echo "##                                                                      ##"
+	echo "## Login command:  docker login -u <dockehub username>                  ##"
+	echo "##                     -- you will then be prompted for a password --   ##"
+	echo "##########################################################################"
+        return 1
+    fi
+
+    return 0
+}
+
+################################################################################
+## Function: return a vlaid DDS type or the default tye
+##    
+##   RETURN: (0) matching tag string
+##           (1) no tag matched, return default
+################################################################################
+get_dds_type()
+{
+    if [[ -z "$1" ]]
+    then
+	## return default DDS if argument is NULL
+#        echo " WARN: DDS version not defined, using default (${DDS_DEFAULT_FLAVOR})"
+        echo "${DDSS[$DDS_DEFAULT_FLAVOR]}"
+        return 1
+    elif [[ "${DDSS[${1,,}]}" == "" ]]
+    then
+	## When defined, perform dictionary lookup and return default if not found
+#        echo " WARN: DDS version (${1}) not supported, using default (${DDS_DEFAULT_FLAVOR})"
+        echo "${DDSS[$DDS_DEFAULT_FLAVOR]}"
+        return 1
+    else
+#        echo " INFO: DDS version (${1}), returning: ${DDSS[${1,,}]}"
+        echo "${DDSS[${1,,}]}"
+    fi
+
+    return 0
+}
+
+
+## DDS_ENV or use default (fast)
+DDS_TYPE=$(get_dds_type "${DDS_ENV:-$DDS_DEFAULT_FLAVOR}")
+

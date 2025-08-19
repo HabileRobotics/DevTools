@@ -1,0 +1,22 @@
+# Ignore these pattersn.
+# Learn more about .gitignore:
+#     https://www.atlassian.com/git/tutorials/saving-changes/gitignore
+
+# Log files
+*.log
+
+# Emacs (editor) files
+*~
+\#*
+\.#*
+
+# Visual Studio Code IDE
+.vscode/
+
+# Colcon items
+**/build/
+**/install/
+**/log/
+
+#build artifacts
+./*-base/dds_config/
