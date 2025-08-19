@@ -23,7 +23,7 @@ fi
 ## Source the common definitions:
 source ${SCRIPT_PATH}/common
 
-DOCKERHUB_NAMESPACE=DockerForROS2
+DOCKERHUB_NAMESPACE=DevTools
 
 ################################################################################
 echo "Build Tools setup script:"

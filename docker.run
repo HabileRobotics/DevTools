@@ -73,7 +73,7 @@ is_image_present()
 {
     ## Docker command always returns sucessful error code therefor we need to
     ## check if string is empty to determine failure.
-    ## command: docker image ls DockerForROS2/linux-amd64-ros2-humble-stm32 -q
+    ## command: docker image ls DevTools/linux-amd64-ros2-humble-stm32 -q
     IMAGE_ID=`docker image ls $1 -q`
     if [[ -z $IMAGE_ID ]]
     then
@@ -118,7 +118,7 @@ while getopts ":d:hi:nst:v" OPT; do
     i) ## Specify docker image version to use
         DOCKER_IMAGE_VERSION=${OPTARG:-$DOCKER_IMAGE_VERSION}
         if [[ ${DOCKER_IMAGE_VERSION} == ${DOCKERHUB_TOOLS_VERSION} ]]; then
-            echo "INFO: Using default Docker image: ${DOCKER_IMAGE_VERSION}"  ## 0.0.6a
+            echo "INFO: Using default Docker image: ${DOCKER_IMAGE_VERSION}"
         else
             echo "INFO: Using Docker version: ${DOCKER_IMAGE_VERSION}"
         fi
