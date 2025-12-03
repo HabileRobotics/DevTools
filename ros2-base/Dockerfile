@@ -179,8 +179,8 @@ RUN  curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
 
 
 ################################################################################
-## Install ROS2
-## -- want to upgrade begore install ROS2
+## (#8)  Install ROS2
+## -- want to upgrade before install ROS2
 RUN  apt update \
   && apt upgrade -y -q \
   && apt install -y -q \
@@ -192,6 +192,12 @@ RUN  apt update \
          ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
          ros-${ROS_DISTRO}-rmw-fastrtps-cpp \
          ros-${ROS_DISTRO}-desktop \
+         ros-${ROS_DISTRO}-geometry2 \
+         ros-${ROS_DISTRO}-gazebo-msgs \
+         ros-${ROS_DISTRO}-navigation2 \
+         ros-${ROS_DISTRO}-nav2-bringup \
+         ros-${ROS_DISTRO}-ros-core \
+         ros-${ROS_DISTRO}-teleop-twist-keyboard \
          ros-${ROS_DISTRO}-ros2-control \
          ros-${ROS_DISTRO}-ros2-controllers \
          ros-${ROS_DISTRO}-rviz2* \
@@ -204,17 +210,21 @@ RUN  apt update \
   && rm -rf /var/lib/apt/lists/*
 
 ################################################################################
-## Install ROS and the ROS2 development tools
-## -- want to upgrade begore install ROS2
+## (#9) Install ROS and the ROS2 development tools
+## -- want to upgrade before installing ROS2
 RUN  apt update \
   && apt install -y -q \
          ros-${ROS_DISTRO}-demo-nodes-cpp \
          ros-${ROS_DISTRO}-demo-nodes-py \
          ros-${ROS_DISTRO}-joint-state-publisher \
          ros-${ROS_DISTRO}-joint-state-publisher-gui \
+         ros-${ROS_DISTRO}-joy* \
          ros-${ROS_DISTRO}-ros-gz \
+         ros-${ROS_DISTRO}-ros-gz-bridge \
+         ros-${ROS_DISTRO}-ros-gz-sim \
          ros-${ROS_DISTRO}-xacro \
          ros-dev-tools \
+         ros-${ROS_DISTRO}-gz-ros2-control \
   && apt autoremove -y \
   && apt clean \
   && rm -rf /var/lib/apt/lists/*
@@ -248,8 +258,11 @@ RUN if [ "${ROS_DISTRO}" = "humble" ] ; then \
         pip3 install debugpy ;\
         apt update ; \
         apt install -y -q \
-                ros-${ROS_DISTRO}-gazebo-ros-pkgs; \
-        apt autoremove -y ; \
+              ros-${ROS_DISTRO}-nav2-minimal-tb* \
+              ros-${ROS_DISTRO}-gazebo-ros-pkgs; \
+              ros-${ROS_DISTRO}-gazebo-plugins \
+              ros-${ROS_DISTRO}-ros-ign-bridge \
+         apt autoremove -y ; \
         apt clean ; \
         rm -rf /var/lib/apt/lists/* ; \
     fi
@@ -265,6 +278,7 @@ RUN if [ "${ROS_DISTRO}" = "jazzy" ] ; then \
         apt-get install -y -q \
                 python3-debugpy \
                 ros-${ROS_DISTRO}-gz-control; \
+                ros-${ROS_DISTRO}-ros-gz-sim-controllers \
         apt autoremove -y ; \
         apt clean ; \
         rm -rf /var/lib/apt/lists/* ; \
@@ -357,6 +371,8 @@ COPY ${DDS_CONFIG_SOURCE_DIR}  ${DDS_CONFIG_DIR}
 ##
 RUN  sed -i s/"\${debian_chroot:+(\$debian_chroot)}"/"docker-\${debian_chroot:+(\$debian_chroot)}"/g  /etc/skel/.bashrc
 RUN  echo "export ROS_DISTRO=$ROS_DISTRO"                                                                   >> /etc/skel/.bashrc \
+  && echo "export ROS_DOMAIN_ID=0                                                                           >> /etc/skel/.bashrc \
+  && echo "export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET                                                      >> /etc/skel/.bashrc \
   && echo "export FASTRTPS_DEFAULT_PROFILES_FILE=${FASTRTPS_PROFILES_FILE}"                                 >> /etc/skel/.bashrc \
   && echo "export CYCLONEDDS_URI=${CYCLONEDDS_URI}"                                                         >> /etc/skel/.bashrc \
   && echo "export RMW_IMPLEMENTATION=\${USE_DDS:-$RMW_IMPLEMENTATION}"                                      >> /etc/skel/.bashrc \

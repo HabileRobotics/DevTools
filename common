@@ -27,8 +27,10 @@ DDS_DEFAULT_FLAVOR=fast
 
 
 ## 
-LINUX_DISTRO=${LINUX_DISTRO:-jammy}              # noble
-DOCKER_IMAGE_TYPE=${DOCKER_IMAGE_TYPE:-humble}   # jazzy
+##LINUX_DISTRO=${LINUX_DISTRO:-jammy}              # noble
+##DOCKER_IMAGE_TYPE=${DOCKER_IMAGE_TYPE:-humble}   # jazzy
+LINUX_DISTRO=${LINUX_DISTRO:-noble}              # jammy
+DOCKER_IMAGE_TYPE=${DOCKER_IMAGE_TYPE:-jazzy}    # humble
 
 ##
 DOCKERHUB_NAMESPACE=${DOCKERHUB_NAMESPACE:-${DEFAULT_DOCKERHUB_NAMESPACE}}

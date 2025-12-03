@@ -260,6 +260,7 @@ then
            -v ${HOME}/.config:$HOME/.config \
            -v ${HOME}/.emacs:$HOME/.emacs \
            -v ${HOME}/.emacs.d:$HOME/.emacs.d \
+           -v ${HOME}/.gz:$HOME/.gz \
            -v ${HOME}/.Xauthority:$HOME/.Xauthority \
            -v /usr/src:/usr/src \
            -v /lib/modules:/lib/modules \

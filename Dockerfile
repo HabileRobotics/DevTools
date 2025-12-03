@@ -32,6 +32,7 @@ ARG NXP_INSTALLER_DIR=MCUXpressoInstaller
 ARG NXP_TOOLS=.mcuxpressotools
 
 ################################################################################
+USER root
 RUN  userdel -r ubuntu || exit 0
 
 #        usermod -aG users,nogroup,dialout,sudo ${USERNAME}; \
@@ -51,7 +52,7 @@ RUN if [ ${UUID} -ne 6000 ]; then \
             -G users,nogroup,dialout,sudo,adm \
             ${USERNAME}; \
         passwd -d ${USERNAME}; \
-        ln -s ${WORKING} ${HOME}/${WORKING}; \
+        ln -s ${WORKING}  ${HOME}/${WORKING}; \
         chown -R ${USERNAME}:${USERNAME} ${HOME}/.* ${HOME}/* ; \
     fi
 
@@ -83,4 +84,4 @@ RUN if [ ${NXP} -eq 1 ]; then \
 
 
 WORKDIR ${WORKING}
-ENTRYPOINT [ "/usr/bin/bash", "/opt/ros/humble/setup.bash", "tail -f /dev/null" ]
+# ENTRYPOINT [ "/usr/bin/bash", "/opt/ros/humble/setup.bash", "tail -f /dev/null" ]
